@@ -136,14 +136,17 @@ class MegadepthScene:
             W_A, H_A = im_A.width, im_A.height
             W_B, H_B = im_B.width, im_B.height
 
-            detections2D_A = self.detections[idx1]
-            detections2D_B = self.detections[idx2]
-            
-            K = 10000
-            tracks3D_A = torch.zeros(K,3)
-            tracks3D_B = torch.zeros(K,3)
-            tracks3D_A[:len(detections2D_A)] = torch.tensor(self.tracks3D[detections2D_A[:K,-1].astype(np.int32)])
-            tracks3D_B[:len(detections2D_B)] = torch.tensor(self.tracks3D[detections2D_B[:K,-1].astype(np.int32)])
+            detections2D_A = detections2D_B = tracks3D_A = tracks3D_B = []
+            if self.detections is not None or self.tracks3D is not None:
+                K = 10000
+            if self.detections is not None:
+                detections2D_A = self.detections[idx1]
+                detections2D_B = self.detections[idx2]
+            if self.tracks3D is not None:
+                tracks3D_A = torch.zeros(K,3)
+                tracks3D_B = torch.zeros(K,3)
+                tracks3D_A[:len(detections2D_A)] = torch.tensor(self.tracks3D[detections2D_A[:K,-1].astype(np.int32)])
+                tracks3D_B[:len(detections2D_B)] = torch.tensor(self.tracks3D[detections2D_B[:K,-1].astype(np.int32)])
             
             #projs_A, _ = self.tracks_to_detections(tracks3D_A, T1, K1, W_A, H_A)
             #tracks3D_B = torch.zeros(K,2)
@@ -159,10 +162,12 @@ class MegadepthScene:
             [im_A, depth_A], t_A = self.rand_shake(im_A, depth_A)
             [im_B, depth_B], t_B = self.rand_shake(im_B, depth_B)
 
-            detections_A = -torch.ones(K,2)
-            detections_B = -torch.ones(K,2)
-            detections_A[:len(self.detections[idx1])] = self.scale_detections(torch.tensor(detections2D_A[:K,:2]), W_A, H_A) + t_A
-            detections_B[:len(self.detections[idx2])] = self.scale_detections(torch.tensor(detections2D_B[:K,:2]), W_B, H_B) + t_B
+            detections_A = detections_B = []
+            if self.detections is not None:
+                detections_A = -torch.ones(K,2)
+                detections_B = -torch.ones(K,2)
+                detections_A[:len(self.detections[idx1])] = self.scale_detections(torch.tensor(detections2D_A[:K,:2]), W_A, H_A) + t_A
+                detections_B[:len(self.detections[idx2])] = self.scale_detections(torch.tensor(detections2D_B[:K,:2]), W_B, H_B) + t_B
 
             
             K1[:2, 2] += t_A
@@ -171,8 +176,9 @@ class MegadepthScene:
             if self.use_horizontal_flip_aug:
                 if np.random.rand() > 0.5:
                     im_A, im_B, depth_A, depth_B, K1, K2 = self.horizontal_flip(im_A, im_B, depth_A, depth_B, K1, K2)
-                    detections_A[:,0] = W-detections_A
-                    detections_B[:,0] = W-detections_B
+                    if self.detections is not None:
+                        detections_A[:,0] = W-detections_A
+                        detections_B[:,0] = W-detections_B
                     
             if DeDoDe.DEBUG_MODE:
                 tensor_to_pil(im_A[0], unnormalize=True).save(
@@ -211,7 +217,7 @@ class MegadepthScene:
 
 
 class MegadepthBuilder:
-    def __init__(self, data_root="data/megadepth", loftr_ignore=True, imc21_ignore = True) -> None:
+    def __init__(self, data_root="data/megadepth", loftr_ignore=True, imc21_ignore = True, use_detections=True, use_3D_detections=False) -> None:
         self.data_root = data_root
         self.scene_info_root = os.path.join(data_root, "prep_scene_info")
         self.all_scenes = os.listdir(self.scene_info_root)
@@ -222,6 +228,8 @@ class MegadepthBuilder:
         self.test_scenes_loftr = ["0015.npy", "0022.npy"]
         self.loftr_ignore = loftr_ignore
         self.imc21_ignore = imc21_ignore
+        self.use_detections = use_detections
+        self.use_3D_detections = use_3D_detections
 
     def build_scenes(self, split="train", min_overlap=0.0, scene_names = None, **kwargs):
         if split == "train":
@@ -247,12 +255,18 @@ class MegadepthBuilder:
             scene_info = np.load(
                 os.path.join(self.scene_info_root, scene_name), allow_pickle=True
             ).item()
-            scene_info_detections = np.load(
-                os.path.join(self.scene_info_root, "detections", f"detections_{scene_name}"), allow_pickle=True
-            ).item()
-            scene_info_detections3D = np.load(
-                os.path.join(self.scene_info_root, "detections3D", f"detections3D_{scene_name}"), allow_pickle=True
-            )
+            if self.use_detections:
+                scene_info_detections = np.load(
+                    os.path.join(self.scene_info_root, "detections", f"detections_{scene_name}"), allow_pickle=True
+                ).item()
+            else:
+                scene_info_detections = None
+            if self.use_3D_detections:
+                scene_info_detections3D = np.load(
+                    os.path.join(self.scene_info_root, "detections3D", f"detections3D_{scene_name}"), allow_pickle=True
+                )
+            else:
+                scene_info_detections3D = None
 
             scenes.append(
                 MegadepthScene(
